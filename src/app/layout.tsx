@@ -84,7 +84,7 @@ export default function RootLayout({
                 e = document.getElementsByTagName("script")[0];
                 e.parentNode.insertBefore(n, e);
               };
-              ttq.load("D9SOVH3C77U75PNH499G");
+              ttq.load("DBBUGDJC77UBMTILBAQ0");
               ttq.page();
             }(window, document, "ttq");
           `}

@@ -8,6 +8,7 @@ import { EmailVerificationToken } from "@/models/auth-token";
 import { User } from "@/models/user";
 import { Wallet } from "@/models/wallet";
 import { clientIp, enforceRateLimit, RateLimitError } from "@/lib/security/rate-limit";
+import { sendTikTokEvent } from "@/lib/analytics/tiktok-events";
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -69,6 +70,21 @@ export async function POST(request: NextRequest) {
       subject: "Verify your Acctrise email",
       html: `<p>Welcome to Acctrise.</p><p><a href="${verifyUrl}">Verify your email</a></p><p>This link expires in 24 hours.</p>`
     });
+
+    try {
+      const registrationIp = clientIp(request.headers);
+      await sendTikTokEvent({
+        event: "CompleteRegistration",
+        eventId: `registration_${user._id.toString()}`,
+        email,
+        externalId: user._id.toString(),
+        ip: registrationIp === "unknown" ? undefined : registrationIp,
+        userAgent: request.headers.get("user-agent") || undefined,
+        pageUrl: appUrl("/auth/signup")
+      });
+    } catch (error) {
+      console.error("[register/tiktok-event]", error instanceof Error ? error.message : "TikTok event failed");
+    }
 
     return NextResponse.json(
       {

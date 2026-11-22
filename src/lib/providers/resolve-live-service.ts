@@ -1,6 +1,7 @@
 import { connectMongo } from "@/lib/mongodb";
 import { getUsdToNgnRate } from "@/lib/pricing/exchange-rate";
-import { applyNumberServiceProfitMargin, applyTikTokLikesNgnPriceRange, applyUsaWhatsappPrice, isNumberProviderPriceAllowed } from "@/lib/pricing/profit-margin";
+import { applyNumberCustomerPrice, applyNumberServiceProfitMargin, applyTikTokLikesNgnPriceRange, isNumberProviderPriceAllowed } from "@/lib/pricing/profit-margin";
+import { getNumberPricingSettings } from "@/lib/pricing/number-pricing-settings";
 import { Category } from "@/models/category";
 import { Provider } from "@/models/provider";
 import { ProviderService } from "@/models/provider-service";
@@ -82,6 +83,7 @@ export async function resolveLiveService(kind: LiveServiceKind, externalId: stri
 }
 
 async function resolveNumberService(kind: Extract<LiveServiceKind, "foreign-numbers" | "uk-premium">, externalId: string, countryId?: string, countryName?: string, serviceName?: string) {
+  const pricingSettings = await getNumberPricingSettings();
   const enabled = numberProviders.filter((provider) => process.env[provider.envKey]?.trim());
   if (!enabled.length) throw new Error("No number provider is configured.");
   const resolvedCountryName = kind === "uk-premium" ? "United States" : countryName || "";
@@ -101,7 +103,7 @@ async function resolveNumberService(kind: Extract<LiveServiceKind, "foreign-numb
     try {
       const adapter = new definition.Adapter(definition.slug, { apiKey, timeout: 20000 });
       const mapping = await adapter.resolveService(resolvedCountryName, serviceName);
-      return mapping && isNumberProviderPriceAllowed(mapping.price, kind, resolvedCountryName, serviceName)
+      return mapping && isNumberProviderPriceAllowed(mapping.price, kind, resolvedCountryName, serviceName, pricingSettings)
         ? { definition, apiKey, mapping }
         : null;
     } catch (error) {
@@ -131,13 +133,13 @@ async function resolveNumberService(kind: Extract<LiveServiceKind, "foreign-numb
   // Match catalog pricing and keep known backup costs as a floor when one
   // provider temporarily times out during checkout resolution.
   const allowedKnownMappings = knownMappings.filter((mapping) =>
-    isNumberProviderPriceAllowed(Number(mapping.providerPriceCents) / 100, kind, resolvedCountryName, serviceName)
+    isNumberProviderPriceAllowed(Number(mapping.providerPriceCents) / 100, kind, resolvedCountryName, serviceName, pricingSettings)
   );
   const providerPriceUsd = Math.max(
     ...resolvedMappings.map(({ mapping }) => mapping.price),
     ...allowedKnownMappings.map((mapping) => Number(mapping.providerPriceCents) / 100)
   );
-  const livePriceUsd = applyNumberServiceProfitMargin(providerPriceUsd);
+  const livePriceUsd = applyNumberServiceProfitMargin(providerPriceUsd, pricingSettings);
   const stock = Math.max(
     ...resolvedMappings.map(({ mapping }) => mapping.stock),
     ...allowedKnownMappings.map((mapping) => Number(mapping.stock || 0))
@@ -150,12 +152,13 @@ async function resolveNumberService(kind: Extract<LiveServiceKind, "foreign-numb
     { upsert: true, returnDocument: "after" }
   );
   const exchange = await getUsdToNgnRate();
-  const customerPriceUsd = applyUsaWhatsappPrice(
+  const customerPriceUsd = applyNumberCustomerPrice(
     livePriceUsd,
     exchange.rate,
     kind,
     resolvedCountryName,
-    serviceName
+    serviceName,
+    pricingSettings
   );
   const customerNgnCents = Math.max(Math.round(customerPriceUsd * exchange.rate * 100), 0);
   const service = await Service.findOneAndUpdate(

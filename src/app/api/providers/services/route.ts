@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getRequestUser } from "@/lib/auth/request";
 import { fetchLiveCountries, fetchLiveServices, isLiveServiceKind } from "@/lib/providers/live-services";
 import { getUsdToNgnRate } from "@/lib/pricing/exchange-rate";
-import { applyTikTokLikesNgnPriceRange, applyUsaWhatsappPrice } from "@/lib/pricing/profit-margin";
+import { applyNumberCustomerPrice, applyTikTokLikesNgnPriceRange } from "@/lib/pricing/profit-margin";
+import { getNumberPricingSettings } from "@/lib/pricing/number-pricing-settings";
 import { getCachedLiveValue } from "@/lib/cache/live-service-cache";
 
 const FRIENDLY_PROVIDER_MESSAGE = "This service is available, but fulfillment is temporarily unavailable. Please contact support.";
@@ -49,11 +50,12 @@ export async function GET(request: NextRequest) {
     const liveServiceCacheKey = kind === "logs" ? `services:logs:in-stock:${serviceKey}` : `services:${serviceKey}`;
 
     const numberService = kind === "foreign-numbers" || kind === "uk-premium";
-    const [result, exchangeRate] = await Promise.all([
+    const [result, exchangeRate, numberPricing] = await Promise.all([
       numberService
         ? fetchLiveServices(kind, { countryId, countryName, query, limit, preview })
         : getCachedLiveValue(liveServiceCacheKey, serviceCacheMs, () => fetchLiveServices(kind, { countryId, countryName, query, limit, preview })),
-      getUsdToNgnRate()
+      getUsdToNgnRate(),
+      numberService ? getNumberPricingSettings() : Promise.resolve(null)
     ]);
 
     const pricing = {
@@ -79,7 +81,7 @@ export async function GET(request: NextRequest) {
         name: service.name,
         description: service.description,
         price: kind === "foreign-numbers" || kind === "uk-premium"
-          ? applyUsaWhatsappPrice(service.price, exchangeRate.rate, kind, service.countryName, `${service.name} ${service.description || ""}`)
+          ? applyNumberCustomerPrice(service.price, exchangeRate.rate, kind, service.countryName, `${service.name} ${service.description || ""}`, numberPricing!)
           : applyTikTokLikesNgnPriceRange(service.price, exchangeRate.rate, `${service.name} ${service.description || ""}`),
         minOrder: service.minOrder,
         maxOrder: service.maxOrder,

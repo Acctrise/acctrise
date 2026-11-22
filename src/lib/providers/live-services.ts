@@ -5,7 +5,8 @@ import { SMSBowerAdapter } from "@/lib/providers/adapters/sms-bower-adapter";
 import type { SmsActivateAdapter } from "@/lib/providers/adapters/sms-activate-adapter";
 import { ResellingSMMAdapter } from "@/lib/providers/adapters/smm-adapter";
 import type { BaseProviderAdapter, ProviderConfig, ServiceMapping } from "@/lib/providers/base-adapter";
-import { applyLogsProfitMargin, applyNumberServiceProfitMargin, applyProfitMargin, isNumberProviderPriceAllowed, LOGS_PROFIT_MARGIN_PERCENT, NUMBER_PROFIT_MARGIN_PERCENT, PROFIT_MARGIN_PERCENT } from "@/lib/pricing/profit-margin";
+import { applyLogsProfitMargin, applyNumberServiceProfitMargin, applyProfitMargin, isNumberProviderPriceAllowed, LOGS_PROFIT_MARGIN_PERCENT, PROFIT_MARGIN_PERCENT } from "@/lib/pricing/profit-margin";
+import { getNumberPricingSettings } from "@/lib/pricing/number-pricing-settings";
 
 export type LiveServiceKind = "boosting" | "logs" | "foreign-numbers" | "uk-premium";
 
@@ -182,6 +183,7 @@ export function normalizeLiveServiceName(value: string) {
 }
 
 async function fetchNumberServices(kind: Extract<LiveServiceKind, "foreign-numbers" | "uk-premium">, options: FetchLiveServicesOptions): Promise<LiveServicesResult> {
+  const pricingSettings = await getNumberPricingSettings();
   const adapters = createNumberAdapters();
   if (!adapters.length) throw new Error("No number provider is configured.");
   const countryName = kind === "uk-premium" ? USA_COUNTRY_NAME : options.countryName || USA_COUNTRY_NAME;
@@ -193,7 +195,7 @@ async function fetchNumberServices(kind: Extract<LiveServiceKind, "foreign-numbe
   const merged = new Map<string, { service: ServiceMapping; providers: string[] }>();
   for (const result of fulfilledResults) {
     for (const service of result.value.services) {
-      if (!isNumberProviderPriceAllowed(service.price, kind, countryName, service.name)) continue;
+      if (!isNumberProviderPriceAllowed(service.price, kind, countryName, service.name, pricingSettings)) continue;
       const key = normalizeLiveServiceName(service.name);
       const current = merged.get(key);
       if (!current) merged.set(key, { service, providers: [result.value.name] });
@@ -210,7 +212,7 @@ async function fetchNumberServices(kind: Extract<LiveServiceKind, "foreign-numbe
     externalId: `${normalizeLiveServiceName(countryName)}:${key}`,
     name: entry.service.name,
     description: entry.service.description,
-    price: applyNumberServiceProfitMargin(entry.service.price),
+    price: applyNumberServiceProfitMargin(entry.service.price, pricingSettings),
     minOrder: 1,
     maxOrder: 1,
     provider: entry.providers.join(" + "),
@@ -226,7 +228,7 @@ async function fetchNumberServices(kind: Extract<LiveServiceKind, "foreign-numbe
     provider: fulfilledResults.map((result) => result.value.name).join(" + ") || "Available number provider",
     services,
     fetchedAt: new Date().toISOString(),
-    profitMarginPercent: NUMBER_PROFIT_MARGIN_PERCENT
+    profitMarginPercent: pricingSettings.standardMarkupPercent
   };
 }
 

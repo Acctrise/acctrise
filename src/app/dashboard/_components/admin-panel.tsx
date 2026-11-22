@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Ban, CheckCircle2, RefreshCcw, Search, ShieldCheck, ShoppingBag, Users, WalletCards } from "lucide-react";
+import { Activity, Ban, CheckCircle2, Percent, RefreshCcw, Save, Search, ShieldCheck, ShoppingBag, Smartphone, Users, WalletCards } from "lucide-react";
 import { StatusPill } from "./dashboard-widgets";
 
 type AdminUser = {
@@ -42,12 +42,17 @@ type AdminActivity = {
   completedAt?: string | null;
 };
 
-const roleOptions = ["CUSTOMER", "RESELLER", "SUPPORT_AGENT", "ADMIN"];
-
-function formatDate(value?: string | null) {
-  if (!value) return "Never";
-  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(new Date(value));
-}
+type NumberPricing = {
+  standardMarkupPercent: number;
+  lowCostMarkupPercent: number;
+  lowCostThresholdUsd: number;
+  minimumPriceNgn: number;
+  majorSocialPriceNgn: number;
+  discordPriceNgn: number;
+  usaWhatsappPriceNgn: number;
+  providerMaxPriceUsd: number;
+  usaWhatsappProviderMaxPriceUsd: number;
+};
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-NG", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
@@ -60,19 +65,53 @@ export function AdminPanel() {
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [activityQuery, setActivityQuery] = useState("");
   const [activityStatus, setActivityStatus] = useState("ALL");
+  const [numberPricing, setNumberPricing] = useState<NumberPricing | null>(null);
+  const [pricingMessage, setPricingMessage] = useState("");
+  const [savingPricing, setSavingPricing] = useState(false);
 
   async function load() {
     setState("loading");
     setMessage("");
     try {
-      const response = await fetch("/api/admin/users", { cache: "no-store" });
-      const payload = await response.json();
+      const [response, pricingResponse] = await Promise.all([
+        fetch("/api/admin/users", { cache: "no-store" }),
+        fetch("/api/admin/pricing", { cache: "no-store" })
+      ]);
+      const [payload, pricingPayload] = await Promise.all([response.json(), pricingResponse.json()]);
       if (!response.ok) throw new Error(payload.error || "Unable to load admin panel.");
+      if (!pricingResponse.ok) throw new Error(pricingPayload.error || "Unable to load number pricing.");
       setData(payload);
+      setNumberPricing(pricingPayload.numberPricing);
       setState("ready");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load admin panel.");
       setState("error");
+    }
+  }
+
+  function updateNumberPricing(field: keyof NumberPricing, value: string) {
+    const parsed = Number(value);
+    setNumberPricing((current) => current ? { ...current, [field]: Number.isFinite(parsed) ? parsed : 0 } : current);
+  }
+
+  async function saveNumberPricing() {
+    if (!numberPricing) return;
+    setSavingPricing(true);
+    setPricingMessage("");
+    try {
+      const response = await fetch("/api/admin/pricing", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(numberPricing)
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to save number pricing.");
+      setNumberPricing(payload.numberPricing);
+      setPricingMessage("Number pricing updated. New catalog loads and checkouts will use these values.");
+    } catch (error) {
+      setPricingMessage(error instanceof Error ? error.message : "Unable to save number pricing.");
+    } finally {
+      setSavingPricing(false);
     }
   }
 
@@ -103,7 +142,8 @@ export function AdminPanel() {
             activeUsers: users.filter((user) => user.status === "active").length,
             bannedUsers: users.filter((user) => user.status === "banned").length
           },
-          users
+          users,
+          activities
         };
       });
     } catch (error) {
@@ -161,6 +201,40 @@ export function AdminPanel() {
             ))}
           </section>
 
+          {numberPricing ? (
+            <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
+              <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 px-5 py-5 sm:px-6">
+                <div className="flex items-start gap-3">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-blue-600 text-white"><Smartphone className="h-5 w-5" /></span>
+                  <div><h3 className="text-lg font-black tracking-tight text-slate-900">Number pricing</h3><p className="mt-1 max-w-2xl text-xs font-semibold leading-5 text-slate-500">Edit every number tier. Markup percentages are added to the provider cost; fixed prices act as minimum customer prices.</p></div>
+                </div>
+                <button type="button" onClick={() => void saveNumberPricing()} disabled={savingPricing} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-black text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"><Save className="h-4 w-4" />{savingPricing ? "Saving..." : "Save pricing"}</button>
+              </div>
+              <div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-2">
+                <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+                  <div className="mb-4 flex items-center gap-2"><Percent className="h-4 w-4 text-blue-600" /><h4 className="font-black text-slate-900">Percentage tiers</h4></div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <PricingInput label="Standard markup" suffix="%" value={numberPricing.standardMarkupPercent} onChange={(value) => updateNumberPricing("standardMarkupPercent", value)} help="Added to normal provider prices." />
+                    <PricingInput label="Low-cost markup" suffix="%" value={numberPricing.lowCostMarkupPercent} onChange={(value) => updateNumberPricing("lowCostMarkupPercent", value)} help="Added when provider cost is below the threshold." />
+                    <PricingInput label="Low-cost threshold" prefix="$" value={numberPricing.lowCostThresholdUsd} step="0.001" onChange={(value) => updateNumberPricing("lowCostThresholdUsd", value)} help="Provider prices below this use the low-cost markup." />
+                    <PricingInput label="General provider limit" prefix="$" value={numberPricing.providerMaxPriceUsd} step="0.01" onChange={(value) => updateNumberPricing("providerMaxPriceUsd", value)} help="Highest provider cost accepted for most numbers." />
+                    <PricingInput label="USA WhatsApp provider limit" prefix="$" value={numberPricing.usaWhatsappProviderMaxPriceUsd} step="0.01" onChange={(value) => updateNumberPricing("usaWhatsappProviderMaxPriceUsd", value)} help="Highest provider cost accepted for USA WhatsApp." />
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/50 p-4">
+                  <h4 className="mb-4 font-black text-slate-900">Minimum customer prices</h4>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <PricingInput label="All numbers" prefix="₦" value={numberPricing.minimumPriceNgn} onChange={(value) => updateNumberPricing("minimumPriceNgn", value)} help="Minimum price for any number." />
+                    <PricingInput label="Major social apps" prefix="₦" value={numberPricing.majorSocialPriceNgn} onChange={(value) => updateNumberPricing("majorSocialPriceNgn", value)} help="WhatsApp, Facebook, Instagram, TikTok and similar apps." />
+                    <PricingInput label="Discord" prefix="₦" value={numberPricing.discordPriceNgn} onChange={(value) => updateNumberPricing("discordPriceNgn", value)} />
+                    <PricingInput label="USA WhatsApp" prefix="₦" value={numberPricing.usaWhatsappPriceNgn} onChange={(value) => updateNumberPricing("usaWhatsappPriceNgn", value)} />
+                  </div>
+                </div>
+              </div>
+              {pricingMessage ? <div className={`border-t px-5 py-4 text-sm font-bold sm:px-6 ${pricingMessage.startsWith("Number pricing updated") ? "border-emerald-100 bg-emerald-50 text-emerald-800" : "border-amber-100 bg-amber-50 text-amber-900"}`}>{pricingMessage}</div> : null}
+            </section>
+          ) : null}
+
 
 
           <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
@@ -212,6 +286,20 @@ export function AdminPanel() {
         </>
       ) : null}
     </div>
+  );
+}
+
+function PricingInput({ label, value, onChange, prefix, suffix, step = "1", help }: { label: string; value: number; onChange: (value: string) => void; prefix?: string; suffix?: string; step?: string; help?: string }) {
+  return (
+    <label className="block">
+      <span className="text-xs font-black text-slate-700">{label}</span>
+      <span className="mt-2 flex h-11 items-center overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-blue-400 focus-within:ring-4 focus-within:ring-blue-100">
+        {prefix ? <span className="pl-3 text-sm font-black text-slate-500">{prefix}</span> : null}
+        <input type="number" min="0" step={step} value={value} onChange={(event) => onChange(event.target.value)} className="h-full min-w-0 flex-1 bg-transparent px-3 text-sm font-black text-slate-900 outline-none" />
+        {suffix ? <span className="pr-3 text-sm font-black text-slate-500">{suffix}</span> : null}
+      </span>
+      {help ? <span className="mt-1.5 block text-[11px] font-semibold leading-4 text-slate-500">{help}</span> : null}
+    </label>
   );
 }
 

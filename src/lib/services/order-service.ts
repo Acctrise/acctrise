@@ -16,6 +16,7 @@ import { amountFromCents, deductForOrder, getWallet, mongoId, refundOrder } from
 import { ProviderManager } from "../providers/provider-manager";
 import { ProviderService } from "@/models/provider-service";
 import { getUsdToNgnRate } from "@/lib/pricing/exchange-rate";
+import { getNumberPricingSettings } from "@/lib/pricing/number-pricing-settings";
 import { getNumberProviderMaxPriceUsd } from "@/lib/pricing/profit-margin";
 
 export interface CreateOrderRequest {
@@ -168,8 +169,9 @@ export class OrderService {
 
       const numberOrder = ["uk-premium", "foreign-numbers"].includes(String(request.additionalInfo?.kind || ""));
       const fixedPriceUsaWhatsapp = isFixedPriceUsaWhatsappNumber(request.additionalInfo, service.name);
+      const numberPricing = numberOrder ? await getNumberPricingSettings() : null;
       const maxProviderPriceUsd = numberOrder
-        ? getNumberProviderMaxPriceUsd(String(request.additionalInfo?.kind || ""), String(request.additionalInfo?.countryName || ""), service.name)
+        ? getNumberProviderMaxPriceUsd(String(request.additionalInfo?.kind || ""), String(request.additionalInfo?.countryName || ""), service.name, numberPricing!)
         : null;
       const exchangeRate = numberOrder ? (await getUsdToNgnRate()).rate : null;
       const candidates = (await Promise.all(providers.map(async (provider) => ({
@@ -269,7 +271,8 @@ export class OrderService {
     const service = await Service.findById(order.serviceId);
     if (!service) throw new Error("Service not found");
     const fixedPriceUsaWhatsapp = isFixedPriceUsaWhatsappNumber(order.additionalInfo, service.name);
-    const maxProviderPriceUsd = getNumberProviderMaxPriceUsd(String(order.additionalInfo?.kind || ""), String(order.additionalInfo?.countryName || ""), service.name);
+    const numberPricing = await getNumberPricingSettings();
+    const maxProviderPriceUsd = getNumberProviderMaxPriceUsd(String(order.additionalInfo?.kind || ""), String(order.additionalInfo?.countryName || ""), service.name, numberPricing);
 
     const failedExternalOrderId = providerOrder.externalOrderId;
     const previousLogs = providerOrder.logs && typeof providerOrder.logs === "object" ? providerOrder.logs as Record<string, any> : {};
@@ -439,8 +442,9 @@ export class OrderService {
       const providers = await this.providerManager.getProvidersForService(order.serviceId.toString());
       const numberOrder = ["uk-premium", "foreign-numbers"].includes(String(order.additionalInfo?.kind || ""));
       const fixedPriceUsaWhatsapp = isFixedPriceUsaWhatsappNumber(order.additionalInfo, service.name);
+      const numberPricing = numberOrder ? await getNumberPricingSettings() : null;
       const maxProviderPriceUsd = numberOrder
-        ? getNumberProviderMaxPriceUsd(String(order.additionalInfo?.kind || ""), String(order.additionalInfo?.countryName || ""), service.name)
+        ? getNumberProviderMaxPriceUsd(String(order.additionalInfo?.kind || ""), String(order.additionalInfo?.countryName || ""), service.name, numberPricing!)
         : null;
       const exchangeRate = numberOrder ? (await getUsdToNgnRate()).rate : null;
       const candidates = (await Promise.all(providers.map(async (provider) => ({

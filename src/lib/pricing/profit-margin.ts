@@ -1,3 +1,5 @@
+import { DEFAULT_NUMBER_PRICING, type NumberPricingSettings } from "@/lib/pricing/number-pricing-settings";
+
 export const PROFIT_MARGIN_RATE = 0.3;
 export const PROFIT_MARGIN_PERCENT = PROFIT_MARGIN_RATE * 100;
 export const LOGS_PROFIT_MARGIN_RATE = 0.5;
@@ -67,11 +69,11 @@ export function isOtherSocialNumber(serviceText?: string): boolean {
   return /linkedin|youtube|reddit|pinterest|twitch|spotify|tumblr|wechat|line|viber|signal|clubhouse|quora|skype|bigo|imo|kakao|meetme|hinge|tinder|bumble/i.test(serviceText);
 }
 
-export function applyNumberServiceProfitMargin(price: number): number {
+export function applyNumberServiceProfitMargin(price: number, settings: NumberPricingSettings = DEFAULT_NUMBER_PRICING): number {
   if (!Number.isFinite(price) || price <= 0) return price;
-  const multiplier = price < NUMBER_LOW_API_PRICE_THRESHOLD_USD
-    ? NUMBER_LOW_PRICE_MULTIPLIER
-    : NUMBER_STANDARD_PRICE_MULTIPLIER;
+  const multiplier = price < settings.lowCostThresholdUsd
+    ? 1 + settings.lowCostMarkupPercent / 100
+    : 1 + settings.standardMarkupPercent / 100;
   return Number((price * multiplier).toFixed(6));
 }
 
@@ -90,16 +92,16 @@ export function isUsaWhatsappNumber(kind: string, countryName?: string, serviceT
   return isNumberKind && isUsa && Boolean(serviceText && /whats?app/i.test(serviceText));
 }
 
-export function getNumberProviderMaxPriceUsd(kind: string, countryName?: string, serviceText?: string): number {
+export function getNumberProviderMaxPriceUsd(kind: string, countryName?: string, serviceText?: string, settings: NumberPricingSettings = DEFAULT_NUMBER_PRICING): number {
   return isUsaWhatsappNumber(kind, countryName, serviceText)
-    ? USA_WHATSAPP_PROVIDER_MAX_PRICE_USD
-    : NUMBER_PROVIDER_MAX_PRICE_USD;
+    ? settings.usaWhatsappProviderMaxPriceUsd
+    : settings.providerMaxPriceUsd;
 }
 
-export function isNumberProviderPriceAllowed(priceUsd: number, kind: string, countryName?: string, serviceText?: string): boolean {
+export function isNumberProviderPriceAllowed(priceUsd: number, kind: string, countryName?: string, serviceText?: string, settings: NumberPricingSettings = DEFAULT_NUMBER_PRICING): boolean {
   return Number.isFinite(priceUsd)
     && priceUsd > 0
-    && priceUsd <= getNumberProviderMaxPriceUsd(kind, countryName, serviceText);
+    && priceUsd <= getNumberProviderMaxPriceUsd(kind, countryName, serviceText, settings);
 }
 
 
@@ -108,26 +110,40 @@ export function applyUsaWhatsappPrice(
   exchangeRate: number,
   kind: string,
   countryName?: string,
-  serviceText?: string
+  serviceText?: string,
+  settings: NumberPricingSettings = DEFAULT_NUMBER_PRICING
 ): number {
   if (!isUsaWhatsappNumber(kind, countryName, serviceText) || !Number.isFinite(exchangeRate) || exchangeRate <= 0) return priceUsd;
-  return Math.max(priceUsd, USA_WHATSAPP_PRICE_NGN / exchangeRate);
+  return Math.max(priceUsd, settings.usaWhatsappPriceNgn / exchangeRate);
 }
 
-export function applyFixedSocialNumberPrice(priceUsd: number, exchangeRate: number, serviceText?: string): number {
+export function applyFixedSocialNumberPrice(priceUsd: number, exchangeRate: number, serviceText?: string, settings: NumberPricingSettings = DEFAULT_NUMBER_PRICING): number {
   if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) return priceUsd;
   // These advertised prices are floors, not overrides. `priceUsd` already
   // includes the number-service margin, so retaining the larger value keeps
   // expensive countries/provider rates profitable while preserving the
   // familiar minimum price for cheaper numbers.
-  if (isDiscordNumber(serviceText)) return Math.max(priceUsd, DISCORD_NUMBER_PRICE_NGN / exchangeRate);
-  if (isMajorSocialNumber(serviceText)) return Math.max(priceUsd, MAJOR_SOCIAL_NUMBER_PRICE_NGN / exchangeRate);
+  if (isDiscordNumber(serviceText)) return Math.max(priceUsd, settings.discordPriceNgn / exchangeRate);
+  if (isMajorSocialNumber(serviceText)) return Math.max(priceUsd, settings.majorSocialPriceNgn / exchangeRate);
   return priceUsd;
 }
 
-export function applyNumberMinimumPrice(priceUsd: number, exchangeRate: number): number {
+export function applyNumberMinimumPrice(priceUsd: number, exchangeRate: number, settings: NumberPricingSettings = DEFAULT_NUMBER_PRICING): number {
   if (!Number.isFinite(priceUsd) || priceUsd <= 0 || !Number.isFinite(exchangeRate) || exchangeRate <= 0) return priceUsd;
-  return Math.max(priceUsd, NUMBER_MINIMUM_PRICE_NGN / exchangeRate);
+  return Math.max(priceUsd, settings.minimumPriceNgn / exchangeRate);
+}
+
+export function applyNumberCustomerPrice(
+  priceUsd: number,
+  exchangeRate: number,
+  kind: string,
+  countryName?: string,
+  serviceText?: string,
+  settings: NumberPricingSettings = DEFAULT_NUMBER_PRICING
+): number {
+  const minimumPrice = applyNumberMinimumPrice(priceUsd, exchangeRate, settings);
+  const socialPrice = applyFixedSocialNumberPrice(minimumPrice, exchangeRate, serviceText, settings);
+  return applyUsaWhatsappPrice(socialPrice, exchangeRate, kind, countryName, serviceText, settings);
 }
 
 export function applyProfitMarginCents(cents: number): number {

@@ -1,34 +1,5 @@
-﻿import { Resend } from "resend";
-
-let resend: Resend | null = null;
-
-function getResend() {
-  if (!process.env.RESEND_API_KEY) return null;
-  if (!resend) resend = new Resend(process.env.RESEND_API_KEY);
-  return resend;
-}
-
-export async function sendAuthEmail({
-  to,
-  subject,
-  html
-}: {
-  to: string;
-  subject: string;
-  html: string;
-}) {
-  const client = getResend();
-  if (!client) {
-    console.log(`[Email disabled] ${subject} -> ${to}`);
-    return { skipped: true };
-  }
-
-  return client.emails.send({
-    from: process.env.AUTH_EMAIL_FROM || "Acctrise <no-reply@acctrise.com>",
-    to,
-    subject,
-    html
-  });
-}
-
+﻿/**
+ * @deprecated Transactional email now lives in `src/lib/email`.
+ * This module only survives so existing `appUrl` imports keep working.
+ */
 export { appUrl } from "./app-url";

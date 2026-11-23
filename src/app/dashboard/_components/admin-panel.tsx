@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Ban, CheckCircle2, Percent, RefreshCcw, Save, Search, ShieldCheck, ShoppingBag, Smartphone, Users, WalletCards } from "lucide-react";
+import Link from "next/link";
+import { Activity, Ban, CheckCircle2, Percent, RefreshCcw, Save, Search, Server, ShieldCheck, ShoppingBag, Smartphone, Users, WalletCards, Mail, Send, X, Loader2, ChevronDown } from "lucide-react";
 import { StatusPill } from "./dashboard-widgets";
+import { SignupTracker } from "./signup-tracker";
 
 type AdminUser = {
   id: string;
@@ -54,6 +56,7 @@ type NumberPricing = {
   usaWhatsappProviderMaxPriceUsd: number;
 };
 
+
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-NG", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
@@ -68,6 +71,95 @@ export function AdminPanel() {
   const [numberPricing, setNumberPricing] = useState<NumberPricing | null>(null);
   const [pricingMessage, setPricingMessage] = useState("");
   const [savingPricing, setSavingPricing] = useState(false);
+  const [servers, setServers] = useState<Array<{ slug: string; label: string; name: string; enabled: boolean; profitMarginPercent?: number }>>([]);
+  const [busyServer, setBusyServer] = useState<string | null>(null);
+  const [serverMessage, setServerMessage] = useState("");
+  const [marginInputs, setMarginInputs] = useState<Record<string, string>>({});
+  const [savingMargin, setSavingMargin] = useState<string | null>(null);
+
+  // Email broadcast state
+  const [broadcastMode, setBroadcastMode] = useState<"single" | "all">("single");
+  const [broadcastEmail, setBroadcastEmail] = useState("");
+  const [broadcastSubject, setBroadcastSubject] = useState("");
+  const [broadcastMessage, setBroadcastMessage] = useState("");
+  const [broadcastCtaLabel, setBroadcastCtaLabel] = useState("");
+  const [broadcastCtaUrl, setBroadcastCtaUrl] = useState("");
+  const [broadcastStatus, setBroadcastStatus] = useState<"idle" | "sending" | "polling" | "error">("idle");
+  const [broadcastMessageText, setBroadcastMessageText] = useState("");
+  const [broadcastProgress, setBroadcastProgress] = useState<{
+    id: string;
+    status: string;
+    total: number;
+    sent: number;
+    failed: number;
+    progress: number;
+    currentChunk: number;
+    chunks: Array<{ status: string; total: number; sent: number; failed: number }>;
+  } | null>(null);
+  const [broadcastHistory, setBroadcastHistory] = useState<Array<{
+    id: string;
+    mode: string;
+    subject: string;
+    status: string;
+    total: number;
+    sent: number;
+    failed: number;
+    progress: number;
+    createdAt: string;
+  }>>([]);
+  const [busyBroadcastId, setBusyBroadcastId] = useState<string | null>(null);
+
+  async function loadServers() {
+    try {
+      const response = await fetch("/api/admin/providers/status", { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to load servers.");
+      setServers(Array.isArray(payload.servers) ? payload.servers : []);
+    } catch (error) {
+      setServerMessage(error instanceof Error ? error.message : "Unable to load servers.");
+    }
+  }
+
+  async function toggleServer(slug: string, enabled: boolean) {
+    setBusyServer(slug);
+    setServerMessage("");
+    try {
+      const response = await fetch("/api/admin/providers/status", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug, enabled })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to update the server.");
+      setServers((current) => current.map((server) => server.slug === slug ? { ...server, enabled: payload.server.enabled } : server));
+    } catch (error) {
+      setServerMessage(error instanceof Error ? error.message : "Unable to update the server.");
+    } finally {
+      setBusyServer(null);
+    }
+  }
+
+  async function saveMargin(slug: string) {
+    const value = Number(marginInputs[slug] || "");
+    if (!Number.isFinite(value) || value < 0 || value > 1000) return;
+    setSavingMargin(slug);
+    try {
+      const response = await fetch("/api/admin/providers/status", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug, profitMarginPercent: value })
+      });
+      if (!response.ok) throw new Error("Failed to save");
+      setServers((current) =>
+        current.map((s) => s.slug === slug ? { ...s, profitMarginPercent: value } : s)
+      );
+      setMarginInputs((prev) => ({ ...prev, [slug]: "" }));
+    } catch (error) {
+      alert("Failed to save profit margin");
+    } finally {
+      setSavingMargin(null);
+    }
+  }
 
   async function load() {
     setState("loading");
@@ -115,8 +207,30 @@ export function AdminPanel() {
     }
   }
 
+  async function loadBroadcastHistory() {
+    try {
+      const response = await fetch("/api/admin/email/broadcast?limit=10", { cache: "no-store" });
+      const payload = await response.json();
+      if (response.ok && payload.broadcasts) {
+        setBroadcastHistory(payload.broadcasts);
+      }
+    } catch (error) {
+      console.error("[admin/broadcast/history]", error);
+    }
+  }
+
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadServers(), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadBroadcastHistory(), 0);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -150,6 +264,95 @@ export function AdminPanel() {
       setMessage(error instanceof Error ? error.message : "Unable to update user.");
     } finally {
       setBusyUserId(null);
+    }
+  }
+
+  async function sendBroadcast() {
+    if (!broadcastSubject.trim() || !broadcastMessage.trim()) {
+      setBroadcastMessageText("Subject and message are required");
+      return;
+    }
+    if (broadcastMode === "single" && !broadcastEmail.trim()) {
+      setBroadcastMessageText("Recipient email is required");
+      return;
+    }
+
+    setBroadcastStatus("sending");
+    setBroadcastMessageText("");
+    try {
+      const response = await fetch("/api/admin/email/broadcast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: broadcastMode,
+          subject: broadcastSubject.trim(),
+          message: broadcastMessage.trim(),
+          email: broadcastMode === "single" ? broadcastEmail.trim() : undefined,
+          ctaLabel: broadcastCtaLabel.trim() || undefined,
+          ctaUrl: broadcastCtaUrl.trim() || undefined
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Failed to send broadcast");
+
+      setBroadcastStatus("polling");
+      setBroadcastMessageText("Broadcast queued. Sending...");
+      // Start polling immediately so progress updates instead of hanging on "Sending..."
+      void pollBroadcast(payload.broadcast.id);
+    } catch (error) {
+      setBroadcastStatus("error");
+      setBroadcastMessageText(error instanceof Error ? error.message : "Failed to send broadcast");
+    }
+  }
+
+  async function pollBroadcast(id: string) {
+    setBusyBroadcastId(id);
+    try {
+      const response = await fetch(`/api/admin/email/broadcast/${encodeURIComponent(id)}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Failed to load broadcast status");
+
+      const b = payload.broadcast;
+      setBroadcastProgress({
+        id: b.id,
+        status: b.status,
+        total: b.total,
+        sent: b.sent,
+        failed: b.failed,
+        progress: b.progress,
+        currentChunk: b.currentChunk,
+        chunks: b.chunks
+      });
+
+      if (b.status === "processing" || b.status === "queued" || b.status === "paused") {
+        setBroadcastMessageText(`Sending... ${b.sent}/${b.total} (${b.progress}%)`);
+        window.setTimeout(() => void pollBroadcast(id), 3000);
+      } else if (b.status === "done") {
+        setBroadcastStatus("idle");
+        setBroadcastMessageText(`Done! Sent ${b.sent}, failed ${b.failed}`);
+        loadBroadcastHistory();
+      } else if (b.status === "failed") {
+        setBroadcastStatus("error");
+        setBroadcastMessageText(`Failed. Sent ${b.sent}, failed ${b.failed}`);
+      } else if (b.status === "paused") {
+        setBroadcastMessageText(`Paused at limit. Resumes automatically. ${b.sent}/${b.total}`);
+      }
+    } catch (error) {
+      setBroadcastMessageText(error instanceof Error ? error.message : "Failed to poll broadcast");
+    } finally {
+      setBusyBroadcastId(null);
+    }
+  }
+
+  async function resumeBroadcast(id: string) {
+    try {
+      const response = await fetch(`/api/admin/email/broadcast/${encodeURIComponent(id)}`, { method: "POST" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Failed to resume broadcast");
+      setBroadcastMessageText("Resuming...");
+      pollBroadcast(id);
+    } catch (error) {
+      setBroadcastMessageText(error instanceof Error ? error.message : "Failed to resume broadcast");
     }
   }
 
@@ -235,6 +438,325 @@ export function AdminPanel() {
             </section>
           ) : null}
 
+          <SignupTracker />
+
+          <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+              <div>
+                <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-blue-600" /><h3 className="text-lg font-black tracking-tight text-slate-900">Logs servers</h3></div>
+                <p className="mt-1 text-xs font-semibold text-slate-500">Turning a server off hides it from customers immediately. The other server keeps selling.</p>
+              </div>
+              <Link href="/dashboard/admin/logs-server-2" className="inline-flex h-10 items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 text-sm font-black text-blue-700 transition hover:bg-blue-100">
+                <Server className="h-4 w-4" /> Server 2 products
+              </Link>
+            </div>
+            {serverMessage ? <div className="m-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-900">{serverMessage}</div> : null}
+            {servers.length ? (
+              <div className="grid gap-3 p-4 sm:grid-cols-2">
+                {servers.map((server) => {
+                  const isSujan = server.slug === "sujandepartment";
+                  const inputValue = marginInputs[server.slug] || "";
+                  const isSaving = savingMargin === server.slug;
+
+                  return (
+                    <article key={server.slug} className="flex flex-col items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                      <div className="min-w-0 w-full">
+                        <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-400">{server.label}</p>
+                        <strong className="mt-1 block text-base font-black text-slate-900">{server.name}</strong>
+                        <span className={server.enabled ? "mt-2 inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700 ring-1 ring-emerald-100" : "mt-2 inline-flex rounded-full bg-rose-50 px-2.5 py-1 text-xs font-black text-rose-700 ring-1 ring-rose-100"}>{server.enabled ? "Selling" : "Off"}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void toggleServer(server.slug, !server.enabled)}
+                        disabled={busyServer === server.slug}
+                        className={server.enabled ? "h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 transition hover:text-rose-700 disabled:opacity-60" : "h-10 rounded-xl bg-blue-600 px-4 text-sm font-black text-white transition hover:bg-blue-700 disabled:opacity-60"}
+                      >
+                        {busyServer === server.slug ? "Saving..." : server.enabled ? "Turn off" : "Turn on"}
+                      </button>
+                      {isSujan ? (
+                        <div className="w-full flex items-center gap-2 mt-2 pt-2 border-t border-slate-200">
+                          <label className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Profit %</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="1000"
+                            step="1"
+                            placeholder={server.profitMarginPercent ? `${server.profitMarginPercent}%` : "50%"}
+                            value={inputValue}
+                            onChange={(e) => setMarginInputs((prev) => ({ ...prev, [server.slug]: e.target.value }))}
+                            className="h-10 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-sm font-black text-slate-900 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                            aria-label="Profit margin percentage"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void saveMargin(server.slug)}
+                            disabled={isSaving || !inputValue.trim()}
+                            className="h-10 rounded-xl bg-blue-600 px-4 text-sm font-black text-white transition hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            {isSaving ? "Saving..." : "Set"}
+                          </button>
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
+              </div>
+            ) : <div className="p-5 text-sm font-semibold text-slate-500">No logs servers configured.</div>}
+          </section>
+
+
+
+          <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 px-5 py-4">
+              <div>
+                <div className="flex items-center gap-2"><Mail className="h-5 w-5 text-emerald-600" /><h3 className="text-lg font-black tracking-tight text-slate-900">Email broadcast</h3></div>
+                <p className="mt-1 text-xs font-semibold text-slate-500">Send a one-off email or broadcast to all verified users.</p>
+              </div>
+            </div>
+            <div className="p-5 space-y-5">
+              {broadcastProgress ? (
+                <div className="space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="font-black text-slate-900 truncate">{broadcastSubject || "Broadcast"}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {broadcastProgress.status === "paused"
+                          ? `Paused at daily limit — resumes automatically. ${broadcastProgress.sent}/${broadcastProgress.total} sent`
+                          : broadcastProgress.status === "processing"
+                          ? `Sending chunk ${broadcastProgress.currentChunk + 1}... ${broadcastProgress.sent}/${broadcastProgress.total} (${broadcastProgress.progress}%)`
+                          : broadcastProgress.status === "done"
+                          ? `Done. Sent ${broadcastProgress.sent}, failed ${broadcastProgress.failed}`
+                          : broadcastProgress.status === "failed"
+                          ? `Failed. Sent ${broadcastProgress.sent}, failed ${broadcastProgress.failed}`
+                          : `Queued — ${broadcastProgress.total} recipients`}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {broadcastProgress.status === "paused" || broadcastProgress.status === "failed" ? (
+                        <button
+                          type="button"
+                          onClick={() => void resumeBroadcast(broadcastProgress.id)}
+                          disabled={busyBroadcastId === broadcastProgress.id}
+                          className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-black text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                        >
+                          {busyBroadcastId === broadcastProgress.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Resume
+                        </button>
+                      ) : broadcastProgress.status === "processing" ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBroadcastProgress(null);
+                            setBroadcastMessageText("");
+                            setBroadcastStatus("idle");
+                          }}
+                          className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 transition hover:text-rose-700"
+                        >
+                          <X className="h-4 w-4" /> Dismiss
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+                    <div
+                      className="h-full bg-blue-600 transition-all duration-500"
+                      style={{ width: `${Math.min(broadcastProgress.progress, 100)}%` }}
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-500">
+                    <span className="flex-1 min-w-[120px]">Total: <span className="font-black text-slate-900">{broadcastProgress.total}</span></span>
+                    <span className="text-emerald-600">Sent: <span className="font-black">{broadcastProgress.sent}</span></span>
+                    <span className="text-rose-600">Failed: <span className="font-black">{broadcastProgress.failed}</span></span>
+                  </div>
+                  {broadcastMessageText && (
+                    <div className="rounded-lg bg-slate-50 p-3 text-xs font-semibold text-slate-600">{broadcastMessageText}</div>
+                  )}
+                  {broadcastProgress.chunks.length > 1 && (
+                    <details className="group">
+                      <summary className="cursor-pointer text-xs font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1">
+                        Chunks ({broadcastProgress.chunks.length})
+                        <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
+                      </summary>
+                      <div className="mt-2 grid gap-1 text-xs">
+                        {broadcastProgress.chunks.map((chunk, index) => (
+                          <div
+                            key={index}
+                            className={`flex items-center gap-2 px-2 py-1 rounded ${
+                              chunk.status === "done" ? "bg-emerald-50" :
+                              chunk.status === "processing" ? "bg-blue-50" :
+                              chunk.status === "paused" ? "bg-amber-50" :
+                              chunk.status === "failed" ? "bg-rose-50" : "bg-slate-50"
+                            }`}
+                          >
+                            <span className="w-8 text-center font-bold">{index + 1}</span>
+                            <span className="flex-1 text-left truncate">{chunk.status}</span>
+                            <span className="text-emerald-600">{chunk.sent}/{chunk.total}</span>
+                            {chunk.failed > 0 && <span className="text-rose-600">failed {chunk.failed}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-5">
+                    <div>
+                      <label className="block text-xs font-black uppercase tracking-[0.1em] text-slate-400 mb-2">Mode</label>
+                      <div className="flex flex-wrap gap-4">
+                        <label className="inline-flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="broadcastMode"
+                            value="single"
+                            checked={broadcastMode === "single"}
+                            onChange={() => setBroadcastMode("single")}
+                            className="h-4 w-4 text-blue-600 border-slate-300 focus:ring-blue-500"
+                          />
+                          <span className="text-sm font-semibold text-slate-700">Single user</span>
+                        </label>
+                        <label className="inline-flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="broadcastMode"
+                            value="all"
+                            checked={broadcastMode === "all"}
+                            onChange={() => setBroadcastMode("all")}
+                            className="h-4 w-4 text-blue-600 border-slate-300 focus:ring-blue-500"
+                          />
+                          <span className="text-sm font-semibold text-slate-700">All verified users</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {broadcastMode === "single" && (
+                      <div>
+                        <label className="block text-xs font-black uppercase tracking-[0.1em] text-slate-400 mb-1">Recipient email</label>
+                        <input
+                          type="email"
+                          value={broadcastEmail}
+                          onChange={(event) => setBroadcastEmail(event.target.value)}
+                          placeholder="user@example.com"
+                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                        />
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-xs font-black uppercase tracking-[0.1em] text-slate-400 mb-1">Subject</label>
+                      <input
+                        type="text"
+                        value={broadcastSubject}
+                        onChange={(event) => setBroadcastSubject(event.target.value)}
+                        placeholder="Announcing a new feature"
+                        maxLength={200}
+                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-black uppercase tracking-[0.1em] text-slate-400 mb-1">Message (plain text, will be wrapped in light HTML)</label>
+                      <textarea
+                        value={broadcastMessage}
+                        onChange={(event) => setBroadcastMessage(event.target.value)}
+                        placeholder="Hi {{name}},
+
+We're excited to announce..."
+                        rows={6}
+                        maxLength={5000}
+                        className="h-32 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 resize-none font-mono"
+                      />
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="block text-xs font-black uppercase tracking-[0.1em] text-slate-400 mb-1">CTA label (optional)</label>
+                        <input
+                          type="text"
+                          value={broadcastCtaLabel}
+                          onChange={(event) => setBroadcastCtaLabel(event.target.value)}
+                          placeholder="View dashboard"
+                          maxLength={60}
+                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-black uppercase tracking-[0.1em] text-slate-400 mb-1">CTA URL (optional)</label>
+                        <input
+                          type="text"
+                          value={broadcastCtaUrl}
+                          onChange={(event) => setBroadcastCtaUrl(event.target.value)}
+                          placeholder="/dashboard or https://example.com"
+                          maxLength={500}
+                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                        />
+                      </div>
+                    </div>
+
+                    {broadcastMessageText && (
+                      <div className={`rounded-lg p-3 text-xs font-semibold ${broadcastStatus === "error" ? "bg-rose-50 text-rose-800" : "bg-blue-50 text-blue-800"}`}>
+                        {broadcastMessageText}
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-end gap-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => void sendBroadcast()}
+                        disabled={broadcastStatus === "sending" || broadcastStatus === "polling" || !broadcastSubject.trim() || !broadcastMessage.trim() || (broadcastMode === "single" && !broadcastEmail.trim())}
+                        className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 text-sm font-black text-white shadow-sm transition hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0"
+                      >
+                        {broadcastStatus === "sending" || broadcastStatus === "polling" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                        {broadcastStatus === "sending" ? "Sending..." : broadcastMode === "all" ? "Send to everyone" : "Send to user"}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {broadcastHistory.length > 0 && (
+                <details className="group mt-6">
+                  <summary className="cursor-pointer text-xs font-black uppercase tracking-[0.1em] text-slate-400 hover:text-slate-600 flex items-center gap-1">
+                    Recent broadcasts
+                    <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
+                  </summary>
+                  <div className="mt-3 divide-y divide-slate-100">
+                    {broadcastHistory.map((b) => (
+                      <div key={b.id} className="py-3 flex flex-wrap items-center justify-between gap-3 text-sm">
+                        <div className="min-w-0">
+                          <p className="font-black text-slate-900 truncate">{b.subject}</p>
+                          <p className="mt-1 text-xs text-slate-500 flex flex-wrap items-center gap-3">
+                            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black ${
+                              b.status === "done" ? "bg-emerald-50 text-emerald-700" :
+                              b.status === "failed" ? "bg-rose-50 text-rose-700" :
+                              b.status === "paused" ? "bg-amber-50 text-amber-700" :
+                              "bg-slate-50 text-slate-700"
+                            }`}>
+                              {b.status}
+                            </span>
+                            <span>{b.sent}/{b.total} sent ({b.progress}%)</span>
+                            <span>{b.mode === "all" ? "All users" : "Single"}</span>
+                            <span>{new Date(b.createdAt).toLocaleString()}</span>
+                          </p>
+                        </div>
+                        {(b.status === "processing" || b.status === "queued" || b.status === "paused") && (
+                          <button
+                            type="button"
+                            onClick={() => void pollBroadcast(b.id)}
+                            disabled={busyBroadcastId === b.id}
+                            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-black bg-blue-600 text-white transition hover:bg-blue-700 disabled:opacity-60"
+                          >
+                            {busyBroadcastId === b.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCcw className="h-3 w-3" />} Poll
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          </section>
 
 
           <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
@@ -302,4 +824,3 @@ function PricingInput({ label, value, onChange, prefix, suffix, step = "1", help
     </label>
   );
 }
-

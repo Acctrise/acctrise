@@ -1,11 +1,19 @@
 import pino from "pino";
-import { BulkAccAdapter } from "@/lib/providers/adapters/bulkacc-adapter";
 import { GrizzlySMSAdapter } from "@/lib/providers/adapters/grizzly-sms-adapter";
 import { SMSBowerAdapter } from "@/lib/providers/adapters/sms-bower-adapter";
 import type { SmsActivateAdapter } from "@/lib/providers/adapters/sms-activate-adapter";
 import { ResellingSMMAdapter } from "@/lib/providers/adapters/smm-adapter";
 import type { BaseProviderAdapter, ProviderConfig, ServiceMapping } from "@/lib/providers/base-adapter";
-import { applyLogsProfitMargin, applyNumberServiceProfitMargin, applyProfitMargin, isNumberProviderPriceAllowed, LOGS_PROFIT_MARGIN_PERCENT, PROFIT_MARGIN_PERCENT } from "@/lib/pricing/profit-margin";
+import {
+  assertLogsServerEnabled,
+  createLogsAdapter,
+  getLogsServerApiKey,
+  getLogsServerDefinition,
+  isLogsServerId,
+  logsServerDefinitions,
+  type LogsServerId
+} from "@/lib/providers/logs-servers";
+import { applyLogsProfitMargin, applyNumberServiceProfitMargin, applyProfitMargin, isNumberProviderPriceAllowed, LOGS_PROFIT_MARGIN_PERCENT, NUMBER_PROFIT_MARGIN_PERCENT, PROFIT_MARGIN_PERCENT } from "@/lib/pricing/profit-margin";
 import { getNumberPricingSettings } from "@/lib/pricing/number-pricing-settings";
 
 export type LiveServiceKind = "boosting" | "logs" | "foreign-numbers" | "uk-premium";
@@ -18,6 +26,7 @@ type FetchLiveServicesOptions = {
   query?: string;
   limit?: number;
   preview?: boolean;
+  server?: LogsServerId;
 };
 
 const USA_COUNTRY_ID = "1";
@@ -28,14 +37,13 @@ const numberDefinitions = [
   { id: "smsbower", name: "SMSBower", envKey: "SMSBOWER_API_KEY", Adapter: SMSBowerAdapter }
 ] as const;
 
-const definitions: Record<Exclude<LiveServiceKind, "foreign-numbers" | "uk-premium">, {
+const definitions: Record<"boosting", {
   id: string;
   name: string;
-  envKey: "BULKACC_API_KEY" | "JUSTANOTHERPANEL_API_KEY";
+  envKey: "JUSTANOTHERPANEL_API_KEY";
   adapter: AdapterClass;
 }> = {
   boosting: { id: "justanotherpanel", name: "JustAnotherPanel", envKey: "JUSTANOTHERPANEL_API_KEY", adapter: ResellingSMMAdapter },
-  logs: { id: "bulkacc", name: "Bulkacc", envKey: "BULKACC_API_KEY", adapter: BulkAccAdapter },
 };
 
 export interface LiveCountry {
@@ -76,7 +84,7 @@ function configured(value: string | undefined) {
   return Boolean(value && value.trim().length > 0);
 }
 
-function createAdapter(kind: Exclude<LiveServiceKind, "foreign-numbers" | "uk-premium">) {
+function createAdapter(kind: "boosting") {
   const definition = definitions[kind];
   const apiKey = process.env[definition.envKey];
 
@@ -131,15 +139,10 @@ export async function fetchLiveCountries(kind: Extract<LiveServiceKind, "foreign
 
 export async function fetchLiveServices(kind: LiveServiceKind, options: FetchLiveServicesOptions = {}): Promise<LiveServicesResult> {
   if (kind === "foreign-numbers" || kind === "uk-premium") return fetchNumberServices(kind, options);
+  if (kind === "logs") return fetchLogsServices(options);
+
   const { definition, adapter } = createAdapter(kind);
-  let providerServices: ServiceMapping[];
-
-  if (kind === "logs" && options.preview && adapter instanceof BulkAccAdapter) {
-    providerServices = await adapter.fetchServicePreview();
-  } else {
-    providerServices = await adapter.fetchServices();
-  }
-
+  const providerServices = await adapter.fetchServices();
   const services = filterServices(kind, providerServices);
 
   return {
@@ -149,8 +152,8 @@ export async function fetchLiveServices(kind: LiveServiceKind, options: FetchLiv
       externalId: service.externalId,
       name: service.name,
       description: service.description,
-      price: kind === "logs" ? applyLogsProfitMargin(service.price) : applyProfitMargin(service.price),
-      minOrder: kind === "boosting" ? BOOSTING_MIN_QUANTITY : service.minOrder,
+      price: applyProfitMargin(service.price),
+      minOrder: service.minOrder,
       maxOrder: service.maxOrder,
       provider: definition.name,
       countryId: service.countryId,
@@ -163,7 +166,49 @@ export async function fetchLiveServices(kind: LiveServiceKind, options: FetchLiv
       stock: service.stock
     })),
     fetchedAt: new Date().toISOString(),
-    profitMarginPercent: kind === "logs" ? LOGS_PROFIT_MARGIN_PERCENT : PROFIT_MARGIN_PERCENT
+    profitMarginPercent: PROFIT_MARGIN_PERCENT
+  };
+}
+
+async function fetchLogsServices(options: FetchLiveServicesOptions = {}): Promise<LiveServicesResult> {
+  const serverId: LogsServerId = options.server && isLogsServerId(options.server) ? options.server : logsServerDefinitions[0].id;
+  const definition = getLogsServerDefinition(serverId);
+  if (!definition) throw new Error("The selected server is not available.");
+
+  const apiKey = getLogsServerApiKey(definition);
+  if (!apiKey) throw new Error(`${definition.envKey} is not configured.`);
+
+  await assertLogsServerEnabled(definition);
+  const adapter = createLogsAdapter(definition, apiKey);
+
+  const providerServices = options.preview && "fetchServicePreview" in adapter
+    ? await (adapter as BaseProviderAdapter & { fetchServicePreview: () => Promise<ServiceMapping[]> }).fetchServicePreview()
+    : await adapter.fetchServices();
+
+  const services = filterServices("logs", providerServices);
+
+  return {
+    kind: "logs",
+    provider: definition.name,
+    services: services.map((service) => ({
+      externalId: service.externalId,
+      name: service.name,
+      description: service.description,
+      price: applyLogsProfitMargin(service.price),
+      minOrder: service.minOrder,
+      maxOrder: service.maxOrder,
+      provider: definition.name,
+      countryId: service.countryId,
+      countryName: service.countryName,
+      serviceId: service.serviceId,
+      availability: service.availability,
+      friendlyLabel: service.friendlyLabel,
+      categoryName: service.categoryName,
+      groupName: service.groupName,
+      stock: service.stock
+    })),
+    fetchedAt: new Date().toISOString(),
+    profitMarginPercent: LOGS_PROFIT_MARGIN_PERCENT
   };
 }
 

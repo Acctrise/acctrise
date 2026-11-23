@@ -175,6 +175,43 @@ export async function failTransactionByReference(transactionReference: string, f
   return serializeTransaction(transaction);
 }
 
+export interface TransactionNotificationContext {
+  userId: string;
+  reference: string;
+  amountCents: number;
+  netAmountCents: number;
+  createdAt: Date;
+}
+
+/**
+ * Minimal read used by payment emails. Kept separate from
+ * `completeTransactionByReference` so the public response shape stays untouched.
+ */
+export async function getTransactionNotificationContext(
+  transactionReference: string
+): Promise<TransactionNotificationContext | null> {
+  await connectMongo();
+  const transaction = await Transaction.findOne({ reference: transactionReference })
+    .select("userId reference amountCents netAmountCents createdAt")
+    .lean<{
+      userId: Types.ObjectId;
+      reference: string;
+      amountCents: number;
+      netAmountCents: number;
+      createdAt: Date;
+    } | null>();
+
+  if (!transaction) return null;
+
+  return {
+    userId: transaction.userId.toString(),
+    reference: transaction.reference,
+    amountCents: transaction.amountCents,
+    netAmountCents: transaction.netAmountCents,
+    createdAt: new Date(transaction.createdAt)
+  };
+}
+
 export async function deductForOrder(userId: string, orderId: string, amount: number, fee = 0): Promise<TransactionResponse> {
   await connectMongo();
   const userObjectId = mongoId(userId, "user id");

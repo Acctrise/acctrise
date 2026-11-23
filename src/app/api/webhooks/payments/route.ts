@@ -4,6 +4,7 @@
  */
 
 import { after, NextRequest, NextResponse } from "next/server";
+import { notifyPaymentCompleted, notifyPaymentFailed } from "@/lib/email";
 import { parsePaymentWebhook } from "@/lib/payments";
 import { reconcilePocketFiVirtualAccounts } from "@/lib/payments/virtual-account-reconciliation";
 import { completeTransactionByReference, failTransactionByReference } from "@/lib/services/mongo-wallet-service";
@@ -26,6 +27,7 @@ export async function POST(request: NextRequest) {
             gatewayReference: webhook.providerReference,
             paidAmount: webhook.amount
           });
+          await notifyPaymentCompleted(webhook.reference);
         } catch (error) {
           if (!(error instanceof Error) || error.message !== "Transaction not found") {
             console.error("PocketFi webhook processing failed", error);
@@ -45,6 +47,7 @@ export async function POST(request: NextRequest) {
       after(async () => {
         try {
           await failTransactionByReference(webhook.reference, webhook.failureReason);
+          await notifyPaymentFailed(webhook.reference);
         } catch (error) {
           console.error("PocketFi failed-payment webhook processing failed", error);
         }

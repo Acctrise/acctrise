@@ -692,6 +692,8 @@ const logMarketplaceCategories = [
 function LogsMarketplace() {
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "empty" | "error">("loading");
+  const [servers, setServers] = useState<Array<{ id: string; label: string; name: string }>>([]);
+  const [selectedServer, setSelectedServer] = useState("");
   const [activeCategory, setActiveCategory] = useState("Social Media");
   const [query, setQuery] = useState("");
   const [sortLowFirst, setSortLowFirst] = useState(true);
@@ -703,10 +705,31 @@ function LogsMarketplace() {
 
   useEffect(() => {
     let cancelled = false;
+    async function loadServers() {
+      try {
+        const response = await fetch("/api/providers/services?kind=logs&scope=servers", { cache: "no-store" });
+        const body = await response.json();
+        if (cancelled) return;
+        const list = Array.isArray(body.servers) ? body.servers : [];
+        setServers(list);
+        setSelectedServer(list[0]?.id || "");
+        if (!list.length) setState("empty");
+      } catch {
+        if (!cancelled) setState("error");
+      }
+    }
+    loadServers();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedServer) return;
+    let cancelled = false;
     async function load() {
       setState("loading");
+      setSelectedService(null);
       try {
-        const response = await fetch("/api/providers/services?kind=logs");
+        const response = await fetch("/api/providers/services?kind=logs&server=" + encodeURIComponent(selectedServer), { cache: "no-store" });
         const body = await response.json();
         if (cancelled) return;
         if (!response.ok) throw new Error("Logs unavailable");
@@ -719,7 +742,7 @@ function LogsMarketplace() {
     }
     load();
     return () => { cancelled = true; };
-  }, []);
+  }, [selectedServer]);
 
   const counts = useMemo(() => logMarketplaceCategories.reduce<Record<string, number>>((acc, category) => {
     acc[category.label] = services.filter((service) =>
@@ -750,7 +773,7 @@ function LogsMarketplace() {
       const response = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind: "logs", externalServiceId: selectedService.externalId, quantity: selectedQuantity })
+        body: JSON.stringify({ kind: "logs", externalServiceId: selectedService.externalId, quantity: selectedQuantity, server: selectedServer })
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Purchase failed.");
@@ -803,6 +826,26 @@ function LogsMarketplace() {
           <input value={query} onChange={(event) => setQuery(event.target.value)} className="h-14 w-full rounded-xl border border-slate-200 bg-slate-50 pl-12 pr-4 text-sm font-semibold text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" placeholder="Search products..." />
         </label>
       </div>
+
+      {servers.length ? (
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50/60 px-4 py-3 lg:px-6">
+          <span className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">Server</span>
+          {servers.map((server) => {
+            const active = server.id === selectedServer;
+            return (
+              <button
+                key={server.id}
+                type="button"
+                onClick={() => { if (!active) { setSelectedServer(server.id); setPurchaseNotice(""); setDeliveredAccounts([]); } }}
+                aria-pressed={active}
+                className={`h-10 rounded-lg px-4 text-sm font-bold transition ${active ? "bg-blue-600 text-white shadow-sm shadow-blue-600/20" : "border border-slate-200 bg-white text-slate-600 hover:text-blue-700"}`}
+              >
+                {server.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
       {state === "loading" ? <div className="grid min-h-60 place-items-center p-8 text-sm font-semibold text-slate-600"><span className="inline-flex items-center gap-3"><Loader2 className="h-5 w-5 animate-spin text-blue-600" /> Loading logs...</span></div> : null}
       {state === "error" ? <div className="m-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">{userSafeError()}</div> : null}

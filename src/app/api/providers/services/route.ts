@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRequestUser } from "@/lib/auth/request";
 import { fetchLiveCountries, fetchLiveServices, isLiveServiceKind } from "@/lib/providers/live-services";
+import { getEnabledLogsServers, isLogsServerId, type LogsServerId } from "@/lib/providers/logs-servers";
 import { getUsdToNgnRate } from "@/lib/pricing/exchange-rate";
 import { applyNumberCustomerPrice, applyTikTokLikesNgnPriceRange } from "@/lib/pricing/profit-margin";
 import { getNumberPricingSettings } from "@/lib/pricing/number-pricing-settings";
@@ -40,20 +41,43 @@ export async function GET(request: NextRequest) {
       return json({ success: true, countries });
     }
 
+    if (scope === "servers") {
+      if (kind !== "logs") return json({ success: true, servers: [] });
+      const servers = await getEnabledLogsServers();
+      return json({
+        success: true,
+        servers: servers.map((server) => ({ id: server.id, label: server.label, name: server.name }))
+      });
+    }
+
     const countryId = request.nextUrl.searchParams.get("countryId") || undefined;
     const countryName = request.nextUrl.searchParams.get("countryName") || undefined;
     const query = request.nextUrl.searchParams.get("q") || undefined;
     const limit = Number(request.nextUrl.searchParams.get("limit") || 30);
     const preview = kind === "logs" && scope === "preview";
-    const serviceKey = [kind, scope || "", countryId || "", countryName || "", query || "", limit].join(":");
+
+    const serverParam = request.nextUrl.searchParams.get("server");
+    if (kind === "logs" && serverParam && !isLogsServerId(serverParam)) {
+      return NextResponse.json({ error: "Invalid server." }, { status: 400 });
+    }
+    let server: LogsServerId | undefined = kind === "logs" && serverParam ? serverParam as LogsServerId : undefined;
+    if (kind === "logs" && !server) {
+      const enabledServers = await getEnabledLogsServers();
+      if (!enabledServers.length) {
+        return json({ success: true, kind: "logs", label: "Live services", pricing: null, services: [], servers: [] });
+      }
+      server = enabledServers[0].id;
+    }
+
+    const serviceKey = [kind, scope || "", countryId || "", countryName || "", query || "", limit, server || ""].join(":");
     const serviceCacheMs = kind === "logs" ? 30 * 1000 : SERVICE_CACHE_MS;
-    const liveServiceCacheKey = kind === "logs" ? `services:logs:in-stock:${serviceKey}` : `services:${serviceKey}`;
+    const liveServiceCacheKey = kind === "logs" ? `services:logs:${server}:in-stock:${serviceKey}` : `services:${serviceKey}`;
 
     const numberService = kind === "foreign-numbers" || kind === "uk-premium";
     const [result, exchangeRate, numberPricing] = await Promise.all([
       numberService
         ? fetchLiveServices(kind, { countryId, countryName, query, limit, preview })
-        : getCachedLiveValue(liveServiceCacheKey, serviceCacheMs, () => fetchLiveServices(kind, { countryId, countryName, query, limit, preview })),
+        : getCachedLiveValue(liveServiceCacheKey, serviceCacheMs, () => fetchLiveServices(kind, { countryId, countryName, query, limit, preview, server })),
       getUsdToNgnRate(),
       numberService ? getNumberPricingSettings() : Promise.resolve(null)
     ]);

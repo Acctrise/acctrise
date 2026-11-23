@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getRequestUser } from "@/lib/auth/request";
 import { hasRole } from "@/lib/auth/roles";
+import { displayName, sendAccountSuspendedEmail } from "@/lib/email";
 import { connectMongo } from "@/lib/mongodb";
 import { Transaction } from "@/models/transaction";
 import { User } from "@/models/user";
@@ -139,6 +140,16 @@ export async function PATCH(request: NextRequest) {
 
   const user = await User.findByIdAndUpdate(input.userId, { $set: updates }, { new: true });
   if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
+
+  if (updates.status === "banned" && user.email) {
+    after(() =>
+      sendAccountSuspendedEmail({
+        email: user.email,
+        name: displayName(user),
+        reason: "An administrator suspended this account. Contact support if you believe this is a mistake."
+      })
+    );
+  }
 
   const wallet = await Wallet.findOne({ userId: user._id }).lean();
   return NextResponse.json({ success: true, user: serializeUser(user, wallet) });

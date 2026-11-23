@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { appUrl, sendAuthEmail } from "@/lib/auth/email";
+import { appUrl } from "@/lib/auth/app-url";
+import { sendVerificationEmail } from "@/lib/email";
 import { addMinutes, createSecureToken, hashPassword, hashSecureToken, normalizeEmail, usernameFromEmail } from "@/lib/auth/security";
 import { connectMongo } from "@/lib/mongodb";
 import { provisionVirtualAccount } from "@/lib/payments/virtual-account-service";
@@ -65,11 +66,10 @@ export async function POST(request: NextRequest) {
     try { await provisionVirtualAccount(user._id.toString()); } catch (error) { virtualAccountReady = false; console.error("[register/virtual-account]", error instanceof Error ? error.message : "Provisioning failed"); }
 
     const verifyUrl = appUrl(`/api/auth/verify-email?token=${token}`);
-    await sendAuthEmail({
-      to: email,
-      subject: "Verify your Acctrise email",
-      html: `<p>Welcome to Acctrise.</p><p><a href="${verifyUrl}">Verify your email</a></p><p>This link expires in 24 hours.</p>`
-    });
+    const recipientName = [input.firstName, input.lastName].filter(Boolean).join(" ").trim() || user.username;
+
+    // Never block registration on email delivery: the account is already committed.
+    after(() => sendVerificationEmail({ email, name: recipientName, link: verifyUrl }));
 
     try {
       const registrationIp = clientIp(request.headers);

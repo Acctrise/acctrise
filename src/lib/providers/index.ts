@@ -10,6 +10,7 @@ import pino from "pino";
 import { ProviderManager } from "./provider-manager";
 import { ResellingSMMAdapter } from "./adapters/smm-adapter";
 import { BulkAccAdapter } from "./adapters/bulkacc-adapter";
+import { SujanDepartmentAdapter } from "./adapters/sujandepartment-adapter";
 
 let providerManager: ProviderManager | null = null;
 
@@ -25,6 +26,7 @@ export function initializeProviders(logger?: any): ProviderManager {
 
   providerManager.registerAdapter("smm", ResellingSMMAdapter);
   providerManager.registerAdapter("logs", BulkAccAdapter);
+  providerManager.registerAdapter("sujandepartment", SujanDepartmentAdapter);
 
   log.info("Provider system initialized");
   return providerManager;

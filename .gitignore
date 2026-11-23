@@ -11,3 +11,7 @@ tsconfig.tsbuildinfo
 .vercel
 .env.*
 !.env.example
+
+
+.archify
+.cache

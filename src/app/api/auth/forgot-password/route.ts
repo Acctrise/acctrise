@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { appUrl, sendAuthEmail } from "@/lib/auth/email";
+import { appUrl } from "@/lib/auth/app-url";
+import { sendPasswordResetEmail } from "@/lib/email";
 import { addMinutes, createSecureToken, hashSecureToken, normalizeEmail } from "@/lib/auth/security";
 import { connectMongo } from "@/lib/mongodb";
 import { PasswordResetToken } from "@/models/auth-token";
@@ -26,11 +27,10 @@ export async function POST(request: NextRequest) {
       });
 
       const resetUrl = appUrl(`/auth/reset-password?token=${token}`);
-      await sendAuthEmail({
-        to: email,
-        subject: "Reset your Acctrise password",
-        html: `<p>Use this link to reset your password:</p><p><a href="${resetUrl}">Reset password</a></p><p>This link expires in 30 minutes.</p>`
-      });
+      const recipientName = [user.firstName, user.lastName].filter(Boolean).join(" ").trim() || user.username || email.split("@")[0];
+
+      // Response must not depend on delivery, and must not leak whether the address exists.
+      after(() => sendPasswordResetEmail({ email, name: recipientName, link: resetUrl }));
     }
 
     return NextResponse.json({ success: true });

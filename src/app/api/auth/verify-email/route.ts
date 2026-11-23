@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { hashSecureToken } from "@/lib/auth/security";
 import { appUrl } from "@/lib/auth/app-url";
+import { displayName, sendWelcomeEmail } from "@/lib/email";
 import { connectMongo } from "@/lib/mongodb";
 import { EmailVerificationToken } from "@/models/auth-token";
 import { User } from "@/models/user";
@@ -19,9 +20,18 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(appUrl("/auth/login?verified=invalid"));
     }
 
-    await User.updateOne({ _id: record.userId }, { $set: { emailVerified: new Date() } });
+    const user = await User.findOneAndUpdate(
+      { _id: record.userId },
+      { $set: { emailVerified: new Date() } },
+      { new: true }
+    ).select("email firstName lastName username").lean();
+
     record.usedAt = new Date();
     await record.save();
+
+    if (user?.email) {
+      after(() => sendWelcomeEmail({ email: user.email, name: displayName(user) }));
+    }
 
     return NextResponse.redirect(appUrl("/auth/login?verified=success"));
   } catch {

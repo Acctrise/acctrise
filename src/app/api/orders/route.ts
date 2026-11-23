@@ -26,6 +26,7 @@ const createOrderSchema = z.object({
   countryId: z.string().optional(),
   countryName: z.string().optional(),
   serviceName: z.string().optional(),
+  server: z.enum(["1", "2"]).optional(),
   quantity: z.number().int("Quantity must be a whole number.").positive("Quantity must be greater than zero."),
   targetUrl: z.string().url("Enter a complete profile or post link.").optional(),
   targetUsername: z.string().optional(),
@@ -50,7 +51,7 @@ export async function POST(request: NextRequest) {
     let providerInfo: Record<string, unknown> = {};
     const kind = validatedData.kind || null;
     if (validatedData.externalServiceId && isLiveServiceKind(kind)) {
-      const resolved = await resolveLiveService(kind, validatedData.externalServiceId, validatedData.countryId, validatedData.countryName, validatedData.serviceName);
+      const resolved = await resolveLiveService(kind, validatedData.externalServiceId, validatedData.countryId, validatedData.countryName, validatedData.serviceName, validatedData.server);
       serviceId = resolved.serviceId;
       providerInfo = resolved.additionalInfo;
     }

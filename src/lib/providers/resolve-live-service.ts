@@ -7,6 +7,12 @@ import { Provider } from "@/models/provider";
 import { ProviderService } from "@/models/provider-service";
 import { Service } from "@/models/service";
 import { fetchLiveServices, normalizeLiveServiceName, type LiveServiceKind } from "./live-services";
+import {
+  assertLogsServerEnabled,
+  getLogsServerApiKey,
+  getLogsServerDefinition,
+  isLogsServerId
+} from "./logs-servers";
 
 import { GrizzlySMSAdapter } from './adapters/grizzly-sms-adapter';
 import { SMSBowerAdapter } from './adapters/sms-bower-adapter';
@@ -23,32 +29,53 @@ const numberProviders: Array<{
   { name: 'SMSBower', slug: 'smsbower', envKey: 'SMSBOWER_API_KEY', adapterKey: 'smsbower', Adapter: SMSBowerAdapter }
 ];
 
-const providerByKind: Record<Exclude<LiveServiceKind, "foreign-numbers" | "uk-premium">, { name: string; slug: string; type: string; envKey: string }> = {
+const providerByKind: Record<"boosting", { name: string; slug: string; type: string; envKey: string }> = {
   boosting: { name: "JustAnotherPanel", slug: "justanotherpanel", type: "smm", envKey: "JUSTANOTHERPANEL_API_KEY" },
-  logs: { name: "Bulkacc", slug: "bulkacc", type: "logs", envKey: "BULKACC_API_KEY" },
 };
+
+function resolveLogsDefinition(server?: string) {
+  const definition = server && isLogsServerId(server) ? getLogsServerDefinition(server) : getLogsServerDefinition("1");
+  if (!definition) throw new Error("The selected server is not available.");
+  const apiKey = getLogsServerApiKey(definition);
+  if (!apiKey) throw new Error(`${definition.name} is not configured.`);
+  return { definition, apiKey };
+}
 
 function slugify(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 120);
 }
 
-export async function resolveLiveService(kind: LiveServiceKind, externalId: string, countryId?: string, countryName?: string, serviceName?: string) {
+export async function resolveLiveService(kind: LiveServiceKind, externalId: string, countryId?: string, countryName?: string, serviceName?: string, server?: string) {
   if (kind === "foreign-numbers" || kind === "uk-premium") {
     return resolveNumberService(kind, externalId, countryId, countryName, serviceName);
   }
-  const definition = providerByKind[kind];
-  const apiKey = process.env[definition.envKey]?.trim();
+
+  const logsServer = kind === "logs" ? resolveLogsDefinition(server) : null;
+  const definition = logsServer
+    ? {
+      name: logsServer.definition.name,
+      slug: logsServer.definition.slug,
+      type: "logs",
+      envKey: logsServer.definition.envKey,
+      adapter: logsServer.definition.adapterKey
+    }
+    : { ...providerByKind.boosting, adapter: undefined as string | undefined };
+  const apiKey = logsServer ? logsServer.apiKey : process.env[definition.envKey]?.trim();
   if (!apiKey) throw new Error(`${definition.name} is not configured.`);
 
-  const result = await fetchLiveServices(kind, { countryId, countryName, query: serviceName, limit: 60 });
+  if (logsServer) await assertLogsServerEnabled(logsServer.definition);
+
+  const logsServerId = logsServer ? logsServer.definition.id : undefined;
+  const result = await fetchLiveServices(kind, { countryId, countryName, query: serviceName, limit: 60, server: logsServerId });
   const live = result.services.find((service) => service.externalId === externalId);
   if (!live) throw new Error("The selected service is no longer available. Refresh and try again.");
   if (kind === "logs" && live.stock !== undefined && live.stock <= 0) throw new Error("This product is currently out of stock.");
 
   await connectMongo();
+  const providerConfig = definition.adapter ? { apiKey, adapter: definition.adapter } : { apiKey };
   const provider = await Provider.findOneAndUpdate(
     { slug: definition.slug },
-    { $set: { name: definition.name, slug: definition.slug, type: definition.type, status: "ACTIVE", isHealthy: true, config: { apiKey } } },
+    { $set: { name: definition.name, slug: definition.slug, type: definition.type, status: "ACTIVE", isHealthy: true, config: providerConfig } },
     { upsert: true, returnDocument: "after" }
   );
   const categorySlug = kind === "boosting" ? "smm-boosting" : slugify(`live-${kind}`);
@@ -79,7 +106,10 @@ export async function resolveLiveService(kind: LiveServiceKind, externalId: stri
     { upsert: true, returnDocument: "after" }
   );
 
-  return { serviceId: service._id.toString(), additionalInfo: { kind, countryId, providerServiceId: live.serviceId } };
+  return {
+    serviceId: service._id.toString(),
+    additionalInfo: { kind, countryId, providerServiceId: live.serviceId, ...(logsServerId ? { server: logsServerId } : {}) }
+  };
 }
 
 async function resolveNumberService(kind: Extract<LiveServiceKind, "foreign-numbers" | "uk-premium">, externalId: string, countryId?: string, countryName?: string, serviceName?: string) {

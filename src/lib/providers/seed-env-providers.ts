@@ -1,6 +1,7 @@
 import pino from "pino";
 import { connectMongo } from "@/lib/mongodb";
 import { BulkAccAdapter } from "@/lib/providers/adapters/bulkacc-adapter";
+import { SujanDepartmentAdapter } from "@/lib/providers/adapters/sujandepartment-adapter";
 import { applyLogsProfitMarginCents, applyProfitMarginCents } from "@/lib/pricing/profit-margin";
 import type { BaseProviderAdapter, ProviderConfig, ServiceMapping } from "@/lib/providers/base-adapter";
 import { ResellingSMMAdapter } from "@/lib/providers/adapters/smm-adapter";
@@ -16,8 +17,9 @@ const envProviders: Array<{
   name: string;
   slug: string;
   type: "logs" | "smm";
-  envKey: "BULKACC_API_KEY" | "JUSTANOTHERPANEL_API_KEY";
+  envKey: "BULKACC_API_KEY" | "SUJANDEPARTMENT_API_KEY" | "JUSTANOTHERPANEL_API_KEY";
   description: string;
+  adapterKey?: string;
   adapter: AdapterClass;
 }> = [
   {
@@ -27,6 +29,15 @@ const envProviders: Array<{
     envKey: "BULKACC_API_KEY",
     description: "Account logs and account product provider",
     adapter: BulkAccAdapter
+  },
+  {
+    name: "Sujan Department",
+    slug: "sujandepartment",
+    type: "logs",
+    envKey: "SUJANDEPARTMENT_API_KEY",
+    description: "Account logs and account product provider",
+    adapterKey: "sujandepartment",
+    adapter: SujanDepartmentAdapter
   },
   {
     name: "JustAnotherPanel",
@@ -187,7 +198,7 @@ export async function seedEnvProviders({ syncServices = true } = {}) {
           status: "ACTIVE",
           isHealthy: true,
           syncInterval: 300,
-          config: { apiKey }
+          config: { apiKey, ...(provider.adapterKey ? { adapter: provider.adapterKey } : {}) }
         }
       },
       { returnDocument: "after", upsert: true }

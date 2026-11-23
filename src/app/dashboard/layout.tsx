@@ -20,6 +20,7 @@ import {
   Rocket,
   Smartphone,
   Wallet,
+  Server,
   ShieldCheck,
   Sparkles
 } from "lucide-react";
@@ -35,7 +36,8 @@ const navItems: NavItem[] = [
   { icon: Box, label: "My Orders", href: "/dashboard/orders" },
   { icon: Wallet, label: "Fund Wallet", href: "/dashboard/wallet" },
   { icon: BookOpen, label: "Tutorials", href: "/dashboard/tutorials" },
-  { icon: ShieldCheck, label: "Admin", href: "/dashboard/admin", adminOnly: true }
+  { icon: ShieldCheck, label: "Admin", href: "/dashboard/admin", adminOnly: true },
+  { icon: Server, label: "Server 2 Products", href: "/dashboard/admin/logs-server-2", adminOnly: true }
 ];
 
 const adminRoles = new Set(["ADMIN", "SUPER_ADMIN", "DEVELOPER"]);
@@ -58,9 +60,14 @@ function DashboardChrome({ children }: { children: React.ReactNode }) {
   const { data: session } = useSession();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [tutorialPromptDismissed, setTutorialPromptDismissed] = useState(false);
-  const canSeeAdmin = adminRoles.has(session?.user?.role || "");
+  // Session data is only available on the client. Gate anything derived from it
+  // behind `mounted` so the first client render matches the server render and
+  // React does not report a hydration mismatch.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const canSeeAdmin = mounted && adminRoles.has(session?.user?.role || "");
   const visibleNavItems = navItems.filter((item) => !item.adminOnly || canSeeAdmin);
-  const displayName = compactName(session?.user);
+  const displayName = mounted ? compactName(session?.user) : "Acctrise user";
   const showTutorialPrompt = searchParams.get("tutorials") === "1" && !tutorialPromptDismissed;
 
   const dismissTutorialPrompt = useCallback(() => {
@@ -118,7 +125,7 @@ function DashboardChrome({ children }: { children: React.ReactNode }) {
             <span>{userInitial(displayName)}</span>
             <div>
               <strong>{displayName}</strong>
-              <small>{session?.user?.role || "CUSTOMER"}</small>
+              <small>{mounted ? (session?.user?.role || "CUSTOMER") : "CUSTOMER"}</small>
             </div>
           </div>
           <button className="dashboard-logout-button" onClick={handleLogout} type="button">

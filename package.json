@@ -24,6 +24,7 @@
     "clsx": "latest",
     "dotenv": "^17.4.2",
     "framer-motion": "latest",
+    "https-proxy-agent": "^5.0.1",
     "ioredis": "latest",
     "jose": "latest",
     "lucide-react": "latest",

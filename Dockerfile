@@ -1,7 +1,7 @@
 FROM node:24-bookworm-slim AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --include=dev --no-audit --no-fund
 
 FROM dependencies AS build
 ENV NEXT_TELEMETRY_DISABLED=1

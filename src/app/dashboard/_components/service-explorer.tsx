@@ -692,6 +692,7 @@ const logMarketplaceCategories = [
 function LogsMarketplace() {
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "empty" | "error">("loading");
+  const [errorMessage, setErrorMessage] = useState("");
   const [servers, setServers] = useState<Array<{ id: string; label: string; name: string }>>([]);
   const [selectedServer, setSelectedServer] = useState("");
   const [activeCategory, setActiveCategory] = useState("Social Media");
@@ -732,12 +733,15 @@ function LogsMarketplace() {
         const response = await fetch("/api/providers/services?kind=logs&server=" + encodeURIComponent(selectedServer), { cache: "no-store" });
         const body = await response.json();
         if (cancelled) return;
-        if (!response.ok) throw new Error("Logs unavailable");
+        if (!response.ok) throw new Error(body.error || "Logs unavailable");
         const nextServices = Array.isArray(body.services) ? body.services : [];
         setServices(nextServices);
         setState(nextServices.length ? "ready" : "empty");
-      } catch {
-        if (!cancelled) setState("error");
+      } catch (error) {
+        if (!cancelled) {
+          setErrorMessage(error instanceof Error ? error.message : "Logs unavailable");
+          setState("error");
+        }
       }
     }
     load();
@@ -848,7 +852,7 @@ function LogsMarketplace() {
       ) : null}
 
       {state === "loading" ? <div className="grid min-h-60 place-items-center p-8 text-sm font-semibold text-slate-600"><span className="inline-flex items-center gap-3"><Loader2 className="h-5 w-5 animate-spin text-blue-600" /> Loading logs...</span></div> : null}
-      {state === "error" ? <div className="m-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">{userSafeError()}</div> : null}
+      {state === "error" ? <div className="m-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">{errorMessage || "The logs catalogue is temporarily unavailable."}</div> : null}
       {state === "empty" ? <div className="p-8 text-center text-sm font-semibold text-slate-500">No log products are available right now.</div> : null}
 
       {state === "ready" ? (

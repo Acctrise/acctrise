@@ -125,8 +125,12 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error("[providers/services]", { kind, error });
     const timedOut = error instanceof Error && error.message === "Boosting provider is taking too long to respond. Please try again shortly.";
+    // Surface provider-level blockers (for example the Sujan bot-verification
+    // challenge) so the operator can see the real cause instead of a generic
+    // "contact support" message hiding it.
+    const detail = error instanceof Error && (kind === "logs" || timedOut) ? error.message : null;
     return NextResponse.json(
-      { error: timedOut ? error.message : FRIENDLY_PROVIDER_MESSAGE },
+      { error: detail || FRIENDLY_PROVIDER_MESSAGE },
       { status: timedOut ? 503 : 502 }
     );
   }

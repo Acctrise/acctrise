@@ -16,6 +16,7 @@
  */
 
 import axios, { AxiosInstance } from "axios";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import { getUsdToNgnRate } from "@/lib/pricing/exchange-rate";
 import { BaseProviderAdapter, OrderRequest, OrderResponse, OrderStatus, ProviderConfig, ProviderHealth, ServiceMapping } from "../base-adapter";
 
@@ -113,6 +114,7 @@ export class SujanDepartmentAdapter extends BaseProviderAdapter {
     super(providerId, config, logger);
 
     const baseUrl = config.baseUrl || process.env.SUJANDEPARTMENT_BASE_URL || DEFAULT_BASE_URL;
+    const proxyUrl = process.env.SUJANDEPARTMENT_PROXY_URL?.trim();
 
     this.client = axios.create({
       baseURL: baseUrl,
@@ -120,8 +122,13 @@ export class SujanDepartmentAdapter extends BaseProviderAdapter {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${config.apiKey}`
-      }
+      },
+      ...(proxyUrl ? { httpsAgent: new HttpsProxyAgent(proxyUrl), proxy: false } : {})
     });
+
+    if (proxyUrl) {
+      this.log("info", "Sujan Department requests routed through configured proxy");
+    }
   }
 
   async authenticate(): Promise<boolean> {
